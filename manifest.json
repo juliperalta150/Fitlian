@@ -2,23 +2,24 @@
   "name": "Fitlian",
   "short_name": "Fitlian",
   "description": "Tracker Nutricional Personal",
-  "start_url": "./Index.html",
-  "scope": "./",
+  "start_url": "/Fitlian/",
+  "scope": "/Fitlian/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#ffffff",
-  "theme_color": "#4CAF50",
+  "theme_color": "#121212",
   "launch_handler": {
     "client_mode": "navigate-existing"
   },
   "icons": [
     {
+      "src": "/Fitlian/icono.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "icono.png",
+      "src": "/Fitlian/icono.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
