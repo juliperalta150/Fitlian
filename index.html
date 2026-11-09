@@ -883,10 +883,29 @@
 
     <script>
         function formatDec(num) { return Math.round(num * 10) / 10; }
+        function normalizeText(str) { return String(str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
 
-        // --- ESTADO GLOBAL ---
-        // PEGAR TU URL ACÁ ABAJO
-        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyd7Zx7AnJmWQo-MkCSWtGLIOl05bVWFoPXmmtf4bsOzHaH9xrEFPsEC0o0jhx1bdjW/exec';
+        // --- CONFIGURACIÓN SUPABASE ---
+        const SUPABASE_URL = 'https://ewwlpmajblgqytekkuaa.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_f4t31ttToE3dMuLCDrzsYw_JhDFeHQG';
+
+        async function supabaseFetch(endpoint, options = {}) {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
+                ...options,
+                headers: {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_KEY}`,
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {})
+                }
+            });
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText || `HTTP ${res.status}`);
+            }
+            const text = await res.text();
+            return text ? JSON.parse(text) : null;
+        }
 
         let currentUser = '';
         let currentDate = new Date();
@@ -980,17 +999,22 @@
             fetchUserHistory();
         }
 
-        // --- HISTORIAL DESDE SHEETS ---
+        // --- HISTORIAL DESDE SUPABASE ---
         function fetchUserHistory() {
-            fetch(SCRIPT_URL + "?action=getDaily&user=" + currentUser)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === "success") {
-                        fullUserHistory = data.data;
-                        filterDataByDate();
-                    } else if (data.status === "error") {
-                        alert("⚠️ Error al obtener historial: " + data.message);
-                    }
+            supabaseFetch(`daily_logs?user_name=eq.${encodeURIComponent(currentUser)}&select=*&order=id.asc`)
+                .then(rows => {
+                    fullUserHistory = (rows || []).map(r => ({
+                        id: Number(r.id),
+                        date: r.date,
+                        meal: r.meal,
+                        name: r.name,
+                        grams: Number(r.grams) || 0,
+                        kcal: Number(r.kcal) || 0,
+                        carb: Number(r.carb) || 0,
+                        fat: Number(r.fat) || 0,
+                        prot: Number(r.prot) || 0
+                    }));
+                    filterDataByDate();
                 })
                 .catch(err => {
                     console.error("Error trayendo historial:", err);
@@ -1073,13 +1097,13 @@
         function closeManageFoods() { document.getElementById('manage-foods-modal').style.display = 'none'; }
 
         function renderManageFoods() {
-            const filter = document.getElementById('search-manage').value.toLowerCase();
+            const filter = normalizeText(document.getElementById('search-manage').value);
             const list = document.getElementById('manage-list');
             list.innerHTML = '';
             if (savedFoods.length === 0) { list.innerHTML = '<p style="padding:15px; text-align:center;">No hay alimentos guardados.</p>'; return; }
 
             savedFoods.forEach((f, index) => {
-                if (f.name.toLowerCase().includes(filter)) {
+                if (normalizeText(f.name).includes(filter)) {
                     list.innerHTML += `
                         <div style="padding: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
                             <div><strong>${f.name}</strong><div style="font-size: 12px; color: var(--text-muted);">${formatDec(f.base.kcal)}kcal | C: ${formatDec(f.base.carb)}g | G: ${formatDec(f.base.fat)}g | P: ${formatDec(f.base.prot)}g (cada 100g)</div></div>
@@ -1144,12 +1168,9 @@
                 savedFoods[index].name = name;
                 savedFoods[index].base = base;
 
-                fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                supabaseFetch(`base_foods?name=eq.${encodeURIComponent(oldName)}`, {
+                    method: 'PATCH',
                     body: JSON.stringify({
-                        action: "editBaseFood",
-                        oldName: oldName,
                         name: name,
                         kcal: base.kcal,
                         carb: base.carb,
@@ -1168,13 +1189,8 @@
                 savedFoods.splice(index, 1);
                 renderManageFoods();
 
-                fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
-                        action: "deleteBaseFood",
-                        name: foodName
-                    })
+                supabaseFetch(`base_foods?name=eq.${encodeURIComponent(foodName)}`, {
+                    method: 'DELETE'
                 }).catch(error => console.error(error));
             }
         }
@@ -1204,13 +1220,13 @@
         }
 
         function filterSavedFoods() {
-            const filter = document.getElementById('search-saved').value.toLowerCase();
+            const filter = normalizeText(document.getElementById('search-saved').value);
             const list = document.getElementById('saved-list');
             list.innerHTML = '';
             if (savedFoods.length === 0) { list.innerHTML = '<p style="padding:15px; text-align:center;">No hay alimentos guardados.</p>'; return; }
 
             savedFoods.forEach(f => {
-                if (f.name.toLowerCase().includes(filter)) {
+                if (normalizeText(f.name).includes(filter)) {
                     const div = document.createElement('div');
                     div.style = "padding: 12px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 15px;";
                     div.textContent = f.name;
@@ -1221,12 +1237,20 @@
         }
 
         function saveToMyFoods(name, baseData) {
-            const exists = savedFoods.find(f => f.name.toLowerCase() === name.toLowerCase());
+            const exists = savedFoods.find(f => normalizeText(f.name) === normalizeText(name));
             if (!exists) {
                 savedFoods.push({ name: name, base: baseData });
-                fetch(SCRIPT_URL, {
-                    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: "saveBaseFood", name: name, kcal: baseData.kcal, carb: baseData.carb, fat: baseData.fat, prot: baseData.prot, portion_g: baseData.portion_g })
+                supabaseFetch('base_foods?on_conflict=name', {
+                    method: 'POST',
+                    headers: { 'Prefer': 'resolution=merge-duplicates' },
+                    body: JSON.stringify({
+                        name: name,
+                        kcal: baseData.kcal,
+                        carb: baseData.carb,
+                        fat: baseData.fat,
+                        prot: baseData.prot,
+                        portion_g: baseData.portion_g || 100
+                    })
                 }).catch(err => console.error(err));
             }
         }
@@ -1321,12 +1345,20 @@
             updateUI();
             closeModal();
 
-            // Enviamos directo a Sheets
-            fetch(SCRIPT_URL, {
-                method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            // Enviamos directo a Supabase
+            supabaseFetch('daily_logs', {
+                method: 'POST',
                 body: JSON.stringify({
-                    user: currentUser, action: "saveFood", date: formattedDate, meal: currentMeal,
-                    id: newFood.id, name: newFood.name, grams: newFood.grams, kcal: newFood.kcal, carb: newFood.carb, fat: newFood.fat, prot: newFood.prot
+                    id: newFood.id,
+                    user_name: currentUser,
+                    date: formattedDate,
+                    meal: currentMeal,
+                    name: newFood.name,
+                    grams: newFood.grams,
+                    kcal: newFood.kcal,
+                    carb: newFood.carb,
+                    fat: newFood.fat,
+                    prot: newFood.prot
                 })
             }).catch(error => console.error(error));
         }
@@ -1361,22 +1393,24 @@
             updateUI();
             closeModal();
 
-            fetch(SCRIPT_URL, {
-                method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            supabaseFetch('daily_logs', {
+                method: 'POST',
                 body: JSON.stringify({
-                    user: currentUser, action: "saveFood", date: formattedDate, meal: currentMeal,
-                    id: newFood.id, name: newFood.name, grams: newFood.grams, kcal: newFood.kcal, carb: newFood.carb, fat: newFood.fat, prot: newFood.prot
+                    id: newFood.id,
+                    user_name: currentUser,
+                    date: formattedDate,
+                    meal: currentMeal,
+                    name: newFood.name,
+                    grams: newFood.grams,
+                    kcal: newFood.kcal,
+                    carb: newFood.carb,
+                    fat: newFood.fat,
+                    prot: newFood.prot
                 })
             })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === "error") {
-                        alert("⚠️ Error al guardar en Sheets: " + data.message);
-                    }
-                })
                 .catch(error => {
                     console.error(error);
-                    alert("⚠️ Error de conexión/red al guardar alimento: " + error.message);
+                    alert("⚠️ Error al guardar alimento en Supabase: " + error.message);
                 });
         }
 
@@ -1385,23 +1419,10 @@
             fullUserHistory = fullUserHistory.filter(food => food.id !== id);
             updateUI();
 
-            // Enviar petición al backend para borrar de Sheets
-            fetch(SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({
-                    user: currentUser,
-                    action: "deleteFood",
-                    id: id
-                })
-            })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === "error") {
-                        alert("⚠️ Error al eliminar en Sheets: " + data.message);
-                    }
-                })
-                .catch(error => console.error(error));
+            // Enviar petición a Supabase para borrar registro
+            supabaseFetch(`daily_logs?id=eq.${encodeURIComponent(id)}&user_name=eq.${encodeURIComponent(currentUser)}`, {
+                method: 'DELETE'
+            }).catch(error => console.error(error));
         }
 
         function editFood(meal, id) {
@@ -1508,7 +1529,20 @@
         }
 
         function loadBaseFoods() {
-            fetch(SCRIPT_URL).then(response => response.json()).then(data => { if (data.status === "success") savedFoods = data.data; }).catch(err => console.error(err));
+            supabaseFetch('base_foods?select=*&order=name.asc')
+                .then(rows => {
+                    savedFoods = (rows || []).map(r => ({
+                        name: r.name,
+                        base: {
+                            kcal: Number(r.kcal) || 0,
+                            carb: Number(r.carb) || 0,
+                            fat: Number(r.fat) || 0,
+                            prot: Number(r.prot) || 0,
+                            portion_g: Number(r.portion_g) || 100
+                        }
+                    }));
+                })
+                .catch(err => console.error(err));
         }
 
         updateDateDisplay(); updateUI(); loadBaseFoods();
